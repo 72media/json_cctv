@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>CCTV นครฯ + อากาศ + สตรีม + สลับแผนที่</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/feather-icons"></script>
+<link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+<script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+<style>
+body{margin:0;font-family:Arial,sans-serif}#map{height:100vh}
+#ui{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1000;background:rgba(20,20,30,0.92);color:#f0f0f0;padding:12px 18px;border-radius:10px;min-width:480px;max-width:92%;box-shadow:0 6px 20px #000a;overflow:hidden;transition:all .4s ease-in-out;border:1px solid #666}
+#ui.collapsed{max-height:44px;padding:8px}
+#ui-header{cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-weight:bold;color:#fff}
+#datetime{font-size:13px;color:#a5d8ff;margin:6px 0;text-shadow:0 1px 3px #000}
+#weather-current{display:flex;align-items:center;justify-content:center;margin:10px 0;padding:8px 0;border-top:1px solid #555}
+#weather-icon{font-size:52px;margin-right:14px;text-shadow:0 2px 6px #000}
+.forecast-wrapper{max-height:220px;overflow-y:auto;transition:max-height .4s ease-in-out}
+#ui.collapsed .forecast-wrapper{max-height:0}
+#tbl{width:100%;min-width:460px;border-collapse:collapse;font-size:12.5px}
+#tbl th,#tbl td{padding:7px 9px;border:1px solid #777;text-align:center}
+#tbl th{background:rgba(50,50,65,0.8);color:#fff}
+#tbl tr:nth-child(even){background:rgba(40,40,55,0.4)}
+#ctrl{position:absolute;top:10px;left:50px;z-index:1000;background:rgba(25,25,35,0.94);color:#f8f8f8;padding:14px;border-radius:10px;box-shadow:0 4px 16px #0008;max-width:290px;font-size:13.5px;border:1px solid #666}
+#ctrl label{display:block;margin:6px 0;color:#ddd}
+index:1000;background:rgba(25,25,35,0.94);color:#f8f8f8;padding:12px;border-radius:10px;box-shadow:0 4px 12px #0006;font-size:13.5px;border:1px solid #666}
+#status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a1a2e;color:#eee;padding:22px;border-radius:12px;box-shadow:0 0 24px #000c;z-index:2000;border:1px solid #555}
+.sunny{color:#fff176}.cloudy{color:#e0e0e0}.rain{color:#4fc3f7}.thunder{color:#ce93d8}.hot{color:#ff8a65}
+.video-popup{width:100%;max-width:380px;height:210px;margin:10px 0;background:#000;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px #0008;border:1px solid #777}
+.video-js{width:100%!important;height:100%!important}
+@media(max-width:600px){#ui{min-width:90%;padding:10px}#weather-icon{font-size:42px}#tbl{font-size:11.5px}.hide-small{display:none}.video-popup{height:170px}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">กำลังโหลด...</div>
+
+<div id="ui">
+  <div id="ui-header">
+    <span>พยากรณ์อากาศพื้นที่อำเภอเมืองคอน</span>
+    <i data-feather="chevron-down" id="toggle-icon"></i>
+  </div>
+  <div id="datetime"></div>
+  <div id="weather-current"><i data-feather="sun" id="wicon"></i> กำลังโหลด...</div>
+  <div class="forecast-wrapper">
+    <table id="tbl">
+      <thead><tr><th>วัน</th><th>อุณหภูมิ</th><th class="hide-small">รู้สึก</th><th class="hide-small">ฝน%</th><th>สภาพ</th></tr></thead>
+      <tbody id="fbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="ctrl">
+  <strong>JSON</strong><br>
+  <input type="text" id="u" value="https://storage.noc.nakhoncity.org/data/camera.json">
+  <button id="lu">โหลด</button>
+  <hr>
+  <input type="file" id="f" accept=".json">
+  <button id="lf">ไฟล์</button>
+  <hr>
+  <strong>กรอง</strong><br>
+  <label><input type="checkbox" id="s" checked> โรงเรียน <span style="color:#27ae60">●</span></label>
+  <label><input type="checkbox" id="t" checked> จราจร <span style="color:#c0392b">●</span></label>
+  <label><input type="checkbox" id="w" checked> ระดับน้ำ <span style="color:#2980b9">●</span></label>
+  <label><input type="checkbox" id="z" checked> เซฟโซน <span style="color:#e67e22">●</span></label>
+  <div style="margin-top:10px">
+    <button id="sa">แสดง</button><button id="ha">ซ่อน</button>
+  </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+  const m=L.map('map').setView([8.43,99.96],13);
+
+  // แผนที่ฟรีหลายแบบ
+  const baseMaps = {
+    "OpenTopoMap (ภูมิประเทศ)": L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {maxZoom:17,attribution:'© OpenTopoMap'}),
+    "OpenStreetMap (ถนนมาตรฐาน)": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19,attribution:'© OpenStreetMap'}), 
+    "CartoDB Dark (ดำเข้ม)": L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom:19,attribution:'© OpenStreetMap & CartoDB'}),
+    "Esri Satellite (ภาพดาวเทียม)": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19,attribution:'Tiles © Esri — Source: Esri, i-cubed'})
+  };
+
+  // เพิ่มแผนที่เริ่มต้น
+  baseMaps["OpenTopoMap (ภูมิประเทศ)"].addTo(m);
+
+  // Layer Control ให้สลับแผนที่
+  L.control.layers(baseMaps, null, {position:'topright'}).addTo(m);
+
+  const tm={'NSS':'โรงเรียน','NST':'จราจร','NSW':'ระดับน้ำ','NSZ':'เซฟโซน'};
+  const tc={'โรงเรียน':'#27ae60','จราจร':'#c0392b','ระดับน้ำ':'#2980b9','เซฟโซน':'#e67e22'};
+  const lys={'โรงเรียน':L.layerGroup().addTo(m),'จราจร':L.layerGroup().addTo(m),'ระดับน้ำ':L.layerGroup().addTo(m),'เซฟโซน':L.layerGroup().addTo(m)};
+
+  function addMk(it){
+    if(!it?.id||!it?.location?.lat)return;
+    const p=it.id.slice(0,3),typ=tm[p]||(it.roles?.[0]||'อื่น');
+    if(!tc[typ])return;
+    const mk=L.circleMarker([it.location.lat,it.location.lng],{radius:7,fillColor:tc[typ],color:'#fff',weight:2,fillOpacity:.85});
+    const streamUrl=it.streamUrl||`https://streaming.noc.nakhoncity.org/live/${it.id}.m3u8`;
+    const camName=it.name||'ไม่ระบุชื่อ';
+
+    const popupContent = document.createElement('div');
+    popupContent.style.minWidth = '300px';
+    popupContent.style.background = 'rgba(10,10,20,0.95)';
+    popupContent.style.padding = '12px';
+    popupContent.style.borderRadius = '8px';
+    popupContent.style.border = '1px solid #777';
+    popupContent.style.color = '#f0f0f0';
+    popupContent.innerHTML = `
+      <b style="color:#fff">${camName} (${it.id})</b><br>
+      <span style="color:#ddd">ประเภท: ${typ}</span><br>
+      <span style="color:#ddd">พิกัด: ${it.location.lat.toFixed(6)}, ${it.location.lng.toFixed(6)}</span><br><br>
+      <div class="video-popup">
+        <video id="vid-${it.id}" class="video-js vjs-default-skin vjs-big-play-centered" controls preload="auto" muted playsinline></video>
+      </div>
+    `;
+
+    const videoId = `vid-${it.id}`;
+    mk.bindPopup(popupContent, {maxWidth: 380});
+
+    mk.on('popupopen', () => {
+      const player = videojs(videoId, {
+        fluid: true,
+        responsive: true,
+        controls: true,
+        autoplay: true,
+        muted: true,
+        preload: 'auto',
+        liveui: true,
+        html5: {
+          vhs: {
+            overrideNative: !videojs.browser.IS_SAFARI,
+            withCredentials: false,
+            bandwidth: 2000000,
+            enableLowInitialPlaylist: true,
+            smoothQualityChange: true,
+            useBandwidthFromLocalStorage: true
+          }
+        }
+      });
+
+      player.src({src: streamUrl, type: 'application/x-mpegURL'});
+
+      player.ready(() => {
+        player.play().catch(e => console.log('autoplay failed', e));
+      });
+
+      player.on('error', () => {
+        const err = player.error();
+        player.el().innerHTML = `<div style="color:#f66;padding:15px;text-align:center;font-weight:bold">ไม่สามารถเล่นสตรีมได้<br>${err?.message || 'อาจ offline หรือไม่รองรับ'}</div>`;
+      });
+    });
+
+    lys[typ].addLayer(mk);
+  }
+
+  function ld(d){
+    document.getElementById('status').style.display='none';
+    Object.values(lys).forEach(l=>l.clearLayers());
+    if(Array.isArray(d))d.forEach(addMk);
+  }
+
+  document.getElementById('lu').onclick=()=>{fetch(document.getElementById('u').value).then(r=>r.json()).then(ld).catch(()=>alert('โหลด URL ไม่ได้'))};
+  document.getElementById('lf').onclick=()=>{
+    const f=document.getElementById('f').files[0];
+    if(!f)return alert('เลือกไฟล์ก่อน');
+    const r=new FileReader();
+    r.onload=e=>ld(JSON.parse(e.target.result));
+    r.readAsText(f);
+  };
+  document.getElementById('lu').click();
+
+  ['s','t','w','z'].forEach((id,i)=>document.getElementById(id).onchange=e=>{
+    const k=Object.keys(lys)[i];
+    e.target.checked?lys[k].addTo(m):m.removeLayer(lys[k]);
+  });
+
+  document.getElementById('sa').onclick=()=>{Object.values(lys).forEach(l=>l.addTo(m));document.querySelectorAll('#ctrl input').forEach(c=>c.checked=true)};
+  document.getElementById('ha').onclick=()=>{Object.values(lys).forEach(l=>m.removeLayer(l));document.querySelectorAll('#ctrl input').forEach(c=>c.checked=false)};
+
+  setInterval(()=>document.getElementById('datetime').textContent=new Date().toLocaleString('th-TH',{dateStyle:'full',timeStyle:'medium'}),1000);
+
+  document.getElementById('ui-header').onclick=()=>{
+    document.getElementById('ui').classList.toggle('collapsed');
+    document.getElementById('toggle-icon').setAttribute('data-feather',document.getElementById('ui').classList.contains('collapsed')?'chevron-down':'chevron-up');
+    feather.replace();
+  };
+
+  function w(){
+    fetch('https://api.open-meteo.com/v1/forecast?latitude=8.43&longitude=99.96&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max&timezone=Asia/Bangkok')
+    .then(r=>r.json()).then(d=>{
+      const c=d.current,dy=d.daily;
+      let i='sun',t='?',wc=c.weather_code;
+      if(wc===0)i='sun',t='ฟ้าใส';
+      else if(wc<=3)i='cloud',t='เมฆบางส่วน';
+      else if(wc<=48)i='cloud',t='เมฆมาก';
+      else if(wc<=67)i='cloud-rain',t='ฝนเบา';
+      else if(wc<=77)i='cloud-drizzle',t='ฝนหนัก';
+      else if(wc<=99)i='zap',t='ฝนฟ้าคะนอง';
+      document.getElementById('weather-current').innerHTML=`<i data-feather="${i}" id="wicon"></i> นครฯ ตอนนี้: ${c.temperature_2m}°C (รู้สึก ${c.apparent_temperature}°C)<br>ชื้น ${c.relative_humidity_2m}% | ฝน ${c.precipitation}มม. | ${t}`;
+
+      let rows='';
+      for(let j=0;j<dy.time.length;j++){
+        const dt=new Date(dy.time[j]).toLocaleDateString('th-TH',{weekday:'short',day:'numeric',month:'short'});
+        let di='sun',dtxt='?',cl='';
+        const dw=dy.weather_code[j];
+        if(dw===0)di='sun',dtxt='ฟ้าใส',cl='sunny';
+        else if(dw<=3)di='cloud',dtxt='เมฆน้อย',cl='cloudy';
+        else if(dw<=48)di='cloud',dtxt='มีเมฆ',cl='cloudy';
+        else if(dw<=67)di='cloud-rain',dtxt='ฝนเบา',cl='rain';
+        else if(dw<=77)di='cloud-drizzle',dtxt='ฝนหนัก',cl='rain';
+        else if(dw<=99)di='zap',dtxt='ฝนฟ้าคะนอง',cl='thunder';
+        if(dy.temperature_2m_max[j]>=35)cl+=' hot';
+        rows+=`<tr><td>${dt}</td><td>${dy.temperature_2m_max[j]} / ${dy.temperature_2m_min[j]}</td><td class="hide-small">${dy.apparent_temperature_max[j]}°C</td><td class="hide-small">${dy.precipitation_probability_max[j]}%</td><td class="${cl}"><i data-feather="${di}"></i> ${dtxt}</td></tr>`;
+      }
+      document.getElementById('fbody').innerHTML=rows;
+      feather.replace();
+    });
+  }
+  w();setInterval(w,15*60*1000);
+});
+</script>
+</body>
+</html>
